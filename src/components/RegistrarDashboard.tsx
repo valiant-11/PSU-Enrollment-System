@@ -5,7 +5,8 @@ import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Toast } from './Toast';
 import { User } from '../App';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from '../supabase';
 
 interface RegistrarDashboardProps {
   user: User;
@@ -45,14 +46,8 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
     { id: '5', studentId: '2024-00723', name: 'Carlos Santos', program: 'BS Computer Science', year: '2nd Year', email: 'carlos.santos@psu.edu.ph', phone: '+63 956 789 0123', status: 'Active' },
   ]);
 
-  const [subjects, setSubjects] = useState<Subject[]>([
-    { id: '1', code: 'CS 101', name: 'Introduction to Programming', units: 3, type: 'Major', program: 'BSCS', yearLevel: '1', semester: '1st' },
-    { id: '2', code: 'MATH 101', name: 'Calculus I', units: 3, type: 'Major', program: 'BSCS', yearLevel: '1', semester: '1st' },
-    { id: '3', code: 'ENG 101', name: 'English Communication', units: 3, type: 'GE', program: 'All', yearLevel: '1', semester: '1st' },
-    { id: '4', code: 'CS 201', name: 'Data Structures', units: 3, type: 'Major', program: 'BSCS', yearLevel: '2', semester: '1st' },
-    { id: '5', code: 'IT 201', name: 'Database Management', units: 3, type: 'Major', program: 'BSIT', yearLevel: '2', semester: '1st' },
-  ]);
-
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  
   const [programs] = useState([
     { code: 'BSCS', name: 'BS Computer Science', college: 'College of Computer Studies', students: 342 },
     { code: 'BSIT', name: 'BS Information Technology', college: 'College of Computer Studies', students: 298 },
@@ -82,8 +77,51 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
     type: '',
     subjectProgram: '',
     yearLevel: '',
-    semester: ''
+    semester: '',
+    schedule: 'TBA',
+    instructor: 'TBA',
+    college: 'TBA'
   });
+
+  // Load subjects from Supabase on component mount
+  useEffect(() => {
+    loadSubjects();
+  }, []);
+
+  const loadSubjects = async () => {
+    try {
+      console.log('Loading subjects from Supabase...');
+      const { data, error } = await supabase
+        .from('subjects')
+        .select('*')
+        .order('code', { ascending: true });
+      
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
+      
+      console.log('Loaded subjects:', data);
+      
+      // Map database format to component format
+      const mappedSubjects = (data || []).map(s => ({
+        id: s.id,
+        code: s.code,
+        name: s.description,
+        units: s.units,
+        type: s.type,
+        program: s.course,
+        yearLevel: s.year_level,
+        semester: s.semester
+      }));
+      
+      setSubjects(mappedSubjects);
+      console.log('Mapped subjects:', mappedSubjects.length);
+    } catch (error) {
+      console.error('Error loading subjects:', error);
+      setToast({ message: 'Failed to load subjects', type: 'error' });
+    }
+  };
 
   const handleAddStudent = () => {
     if (!formData.studentId || !formData.name || !formData.program || !formData.year) {
@@ -108,39 +146,67 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
     resetForm();
   };
 
-  const handleAddSubject = () => {
+  const handleAddSubject = async () => {
     if (!formData.code || !formData.subjectName || !formData.type) {
       setToast({ message: 'Please fill all required fields', type: 'error' });
       return;
     }
 
-    const newSubject: Subject = {
-      id: (subjects.length + 1).toString(),
-      code: formData.code,
-      name: formData.subjectName,
-      units: formData.units,
-      type: formData.type,
-      program: formData.subjectProgram,
-      yearLevel: formData.yearLevel,
-      semester: formData.semester
-    };
+    try {
+      const { data, error } = await supabase
+        .from('subjects')
+        .insert([{
+          code: formData.code,
+          description: formData.subjectName,
+          units: formData.units,
+          schedule: formData.schedule || 'TBA',
+          instructor: formData.instructor || 'TBA',
+          slots: 0,
+          max_slots: 40,
+          type: formData.type,
+          college: formData.college || 'TBA',
+          course: formData.subjectProgram || 'All',
+          year_level: formData.yearLevel || '1',
+          semester: formData.semester || '1st Semester'
+        }])
+        .select()
+        .single();
 
-    setSubjects([...subjects, newSubject]);
-    setShowModal(false);
-    setToast({ message: 'Subject added successfully!', type: 'success' });
-    resetForm();
+      if (error) throw error;
+
+      setShowModal(false);
+      setToast({ message: 'Subject added successfully!', type: 'success' });
+      loadSubjects(); // Refresh list
+      resetForm();
+    } catch (error) {
+      console.error('Error adding subject:', error);
+      setToast({ message: 'Failed to add subject', type: 'error' });
+    }
   };
 
-  const handleDelete = () => {
-    if (currentPage === 'students') {
-      setStudents(students.filter(s => s.id !== selectedItem.id));
-      setToast({ message: 'Student record deleted', type: 'success' });
-    } else if (currentPage === 'subjects') {
-      setSubjects(subjects.filter(s => s.id !== selectedItem.id));
-      setToast({ message: 'Subject deleted', type: 'success' });
+  const handleDelete = async () => {
+    try {
+      if (currentPage === 'subjects') {
+        const { error } = await supabase
+          .from('subjects')
+          .delete()
+          .eq('id', selectedItem.id);
+
+        if (error) throw error;
+
+        setToast({ message: 'Subject deleted', type: 'success' });
+        loadSubjects(); // Refresh list
+      } else if (currentPage === 'students') {
+        setStudents(students.filter(s => s.id !== selectedItem.id));
+        setToast({ message: 'Student record deleted', type: 'success' });
+      }
+      
+      setShowConfirm(false);
+      setSelectedItem(null);
+    } catch (error) {
+      console.error('Delete error:', error);
+      setToast({ message: 'Failed to delete', type: 'error' });
     }
-    setShowConfirm(false);
-    setSelectedItem(null);
   };
 
   const handleChangeYearLevel = (studentId: string) => {
@@ -161,7 +227,10 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
       type: '',
       subjectProgram: '',
       yearLevel: '',
-      semester: ''
+      semester: '',
+      schedule: 'TBA',
+      instructor: 'TBA',
+      college: 'TBA'
     });
   };
 
@@ -565,7 +634,7 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
                   <option value="">Select Type</option>
                   <option value="Major">Major</option>
                   <option value="GE">General Education</option>
-                  <option value="Elective">Elective</option>
+                  <option value="Core">Core</option>
                 </select>
               </div>
               <div>
@@ -576,8 +645,8 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
                   className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2"
                 >
                   <option value="">Select Program</option>
-                  <option value="BSCS">BSCS</option>
-                  <option value="BSIT">BSIT</option>
+                  <option value="BS Computer Science">BS Computer Science</option>
+                  <option value="BS Information Technology">BS Information Technology</option>
                   <option value="All">All Programs</option>
                 </select>
               </div>
@@ -591,10 +660,10 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
                   className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2"
                 >
                   <option value="">Select Year</option>
-                  <option value="1">1st Year</option>
-                  <option value="2">2nd Year</option>
-                  <option value="3">3rd Year</option>
-                  <option value="4">4th Year</option>
+                  <option value="1st Year">1st Year</option>
+                  <option value="2nd Year">2nd Year</option>
+                  <option value="3rd Year">3rd Year</option>
+                  <option value="4th Year">4th Year</option>
                 </select>
               </div>
               <div>
@@ -605,8 +674,8 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
                   className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2"
                 >
                   <option value="">Select Semester</option>
-                  <option value="1st">1st Semester</option>
-                  <option value="2nd">2nd Semester</option>
+                  <option value="1st Semester">1st Semester</option>
+                  <option value="2nd Semester">2nd Semester</option>
                   <option value="Summer">Summer</option>
                 </select>
               </div>
@@ -657,7 +726,7 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
           <StatCard
             icon={GraduationCap}
             title="Programs Offered"
-            value={programs.length}
+            value={programs.length.toString()}
             subtitle="Active programs"
             color="#3B82F6"
           />
@@ -671,7 +740,7 @@ export function RegistrarDashboard({ user, currentPage, onNavigate, onLogout }: 
           <StatCard
             icon={Calendar}
             title="Subjects"
-            value={subjects.length}
+            value={subjects.length.toString()}
             subtitle="This semester"
             color="#10B981"
           />
